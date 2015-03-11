@@ -33,3 +33,6 @@ https://github.com/FriendsOfSymfony/FOSElasticaBundle/compare/v3.0.4...v3.1.0
    that property while transforming. Combined with the above POST_TRANSFORM event
    developers can now create calculated dynamic properties on Elastica documents
    for indexing. #794
+ * Added detection for some changes in Doctrine 1:M relationships. Eg, when an
+   Address is added or removed to `User->addresses`, `User` is scheduled for an
+   update. #681
