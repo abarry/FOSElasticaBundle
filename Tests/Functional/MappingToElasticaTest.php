@@ -31,6 +31,16 @@ class MappingToElasticaTest extends WebTestCase
         $this->assertArrayHasKey('store', $mapping['type']['properties']['field1']);
         $this->assertTrue($mapping['type']['properties']['field1']['store']);
         $this->assertArrayNotHasKey('store', $mapping['type']['properties']['field2']);
+
+        $type = $this->getType($client, 'type');
+        $mapping = $type->getMapping();
+        $this->assertEquals('parent', $mapping['type']['_parent']['type']);
+
+        $parent = $this->getType($client, 'parent');
+        $mapping = $parent->getMapping();
+
+        $this->assertEquals('my_analyzer', $mapping['parent']['index_analyzer']);
+        $this->assertEquals('whitespace', $mapping['parent']['search_analyzer']);
     }
 
     public function testResetType()
@@ -43,6 +53,9 @@ class MappingToElasticaTest extends WebTestCase
         $mapping = $type->getMapping();
 
         $this->assertNotEmpty($mapping, 'Mapping was populated');
+        $this->assertFalse($mapping['type']['date_detection']);
+        $this->assertTrue($mapping['type']['numeric_detection']);
+        $this->assertEquals(array('yyyy-MM-dd'), $mapping['type']['dynamic_date_formats']);
         $this->assertArrayHasKey('store', $mapping['type']['properties']['field1']);
         $this->assertTrue($mapping['type']['properties']['field1']['store']);
         $this->assertArrayNotHasKey('store', $mapping['type']['properties']['field2']);
@@ -99,11 +112,12 @@ class MappingToElasticaTest extends WebTestCase
 
     /**
      * @param Client $client
+     * @param string $type
      * @return \Elastica\Type
      */
-    private function getType(Client $client)
+    private function getType(Client $client, $type = 'type')
     {
-        return $client->getContainer()->get('fos_elastica.index.index.type');
+        return $client->getContainer()->get('fos_elastica.index.index.' . $type);
     }
 
     protected function setUp()

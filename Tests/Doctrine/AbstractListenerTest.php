@@ -16,7 +16,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
         $eventArgs = $this->createLifecycleEventArgs($entity, $this->getMockObjectManager());
         $indexable = $this->getMockIndexable('index', 'type', $entity, true);
 
-        $listener = $this->createListener($persister, array(), $indexable, array('indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('indexName' => 'index', 'typeName' => 'type'));
         $listener->postPersist($eventArgs);
 
         $this->assertEquals($entity, current($listener->scheduledForInsertion));
@@ -36,7 +36,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
         $eventArgs = $this->createLifecycleEventArgs($entity, $this->getMockObjectManager());
         $indexable = $this->getMockIndexable('index', 'type', $entity, false);
 
-        $listener = $this->createListener($persister, array(), $indexable, array('indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('indexName' => 'index', 'typeName' => 'type'));
         $listener->postPersist($eventArgs);
 
         $this->assertEmpty($listener->scheduledForInsertion);
@@ -57,7 +57,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
         $eventArgs = $this->createLifecycleEventArgs($entity, $this->getMockObjectManager());
         $indexable = $this->getMockIndexable('index', 'type', $entity, true);
 
-        $listener = $this->createListener($persister, array(), $indexable, array('indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('indexName' => 'index', 'typeName' => 'type'));
         $listener->postUpdate($eventArgs);
 
         $this->assertEquals($entity, current($listener->scheduledForUpdate));
@@ -92,7 +92,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
             ->with($entity, 'id')
             ->will($this->returnValue($entity->getId()));
 
-        $listener = $this->createListener($persister, array(), $indexable, array('indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('indexName' => 'index', 'typeName' => 'type'));
         $listener->postUpdate($eventArgs);
 
         $this->assertEmpty($listener->scheduledForUpdate);
@@ -128,7 +128,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
             ->with($entity, 'id')
             ->will($this->returnValue($entity->getId()));
 
-        $listener = $this->createListener($persister, array(), $indexable, array('indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('indexName' => 'index', 'typeName' => 'type'));
         $listener->preRemove($eventArgs);
 
         $this->assertEquals($entity->getId(), current($listener->scheduledForDeletion));
@@ -162,7 +162,7 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
             ->with($entity, 'identifier')
             ->will($this->returnValue($entity->getId()));
 
-        $listener = $this->createListener($persister, array(), $indexable, array('identifier' => 'identifier', 'indexName' => 'index', 'typeName' => 'type'));
+        $listener = $this->createListener($persister, $indexable, array('identifier' => 'identifier', 'indexName' => 'index', 'typeName' => 'type'));
         $listener->preRemove($eventArgs);
 
         $this->assertEquals($entity->identifier, current($listener->scheduledForDeletion));
@@ -179,8 +179,14 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
 
     abstract protected function getListenerClass();
 
+    /**
+     * @return string
+     */
     abstract protected function getObjectManagerClass();
 
+    /**
+     * @return string
+     */
     abstract protected function getClassMetadataClass();
 
     private function createPostFlushEventArgs()
@@ -243,6 +249,11 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
         return $mock;
     }
 
+    /**
+     * @param Listener\Entity $object
+     * @param string $indexName
+     * @param string $typeName
+     */
     private function getMockPersister($object, $indexName, $typeName)
     {
         $mock = $this->getMockBuilder('FOS\ElasticaBundle\Persister\ObjectPersister')
@@ -273,6 +284,12 @@ abstract class ListenerTest extends \PHPUnit_Framework_TestCase
         return $mock;
     }
 
+    /**
+     * @param string $indexName
+     * @param string $typeName
+     * @param Listener\Entity $object
+     * @param boolean $return
+     */
     private function getMockIndexable($indexName, $typeName, $object, $return = null)
     {
         $mock = $this->getMock('FOS\ElasticaBundle\Provider\IndexableInterface');
@@ -294,6 +311,9 @@ class Entity
 {
     private $id;
 
+    /**
+     * @param integer $id
+     */
     public function __construct($id)
     {
         $this->id = $id;

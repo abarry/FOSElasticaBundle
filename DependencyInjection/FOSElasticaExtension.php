@@ -82,7 +82,7 @@ class FOSElasticaExtension extends Extension
     /**
      * @param array $config
      * @param ContainerBuilder $container
-     * @return Configuration|null|\Symfony\Component\Config\Definition\ConfigurationInterface
+     * @return Configuration
      */
     public function getConfiguration(array $config, ContainerBuilder $container)
     {
@@ -108,6 +108,7 @@ class FOSElasticaExtension extends Extension
             if (false !== $logger) {
                 $clientDef->addMethodCall('setLogger', array(new Reference($logger)));
             }
+            $clientDef->addTag('fos_elastica.client');
 
             $container->setDefinition($clientId, $clientDef);
 
@@ -220,9 +221,7 @@ class FOSElasticaExtension extends Extension
 
             foreach (array(
                 'dynamic_templates',
-                'index_analyzer',
                 'properties',
-                'search_analyzer',
                 '_all',
                 '_boost',
                 '_id',
@@ -239,7 +238,12 @@ class FOSElasticaExtension extends Extension
 
             foreach (array(
                 'persistence',
-                'serializer'
+                'serializer',
+                'index_analyzer',
+                'search_analyzer',
+                'date_detection',
+                'dynamic_date_formats',
+                'numeric_detection',
             ) as $field) {
                 $typeConfig['config'][$field] = array_key_exists($field, $type) ?
                     $type[$field] :
@@ -392,7 +396,12 @@ class FOSElasticaExtension extends Extension
             $arguments[] = array(new Reference($callbackId), 'serialize');
         } else {
             $abstractId = 'fos_elastica.object_persister';
-            $arguments[] = $this->indexConfigs[$indexName]['types'][$typeName]['mapping']['properties'];
+            $mapping = $this->indexConfigs[$indexName]['types'][$typeName]['mapping'];
+            $argument = $mapping['properties'];
+            if(isset($mapping['_parent'])){
+                $argument['_parent'] = $mapping['_parent'];
+            }
+            $arguments[] = $argument;
         }
 
         $serviceId = sprintf('fos_elastica.object_persister.%s.%s', $indexName, $typeName);
@@ -463,19 +472,29 @@ class FOSElasticaExtension extends Extension
         $listenerId = sprintf('fos_elastica.listener.%s.%s', $indexName, $typeName);
         $listenerDef = new DefinitionDecorator($abstractListenerId);
         $listenerDef->replaceArgument(0, new Reference($objectPersisterId));
-        $listenerDef->replaceArgument(1, $this->getDoctrineEvents($typeConfig));
-        $listenerDef->replaceArgument(3, array(
+        $listenerDef->replaceArgument(2, array(
             'identifier' => $typeConfig['identifier'],
             'indexName' => $indexName,
             'typeName' => $typeName,
         ));
         if ($typeConfig['listener']['logger']) {
-            $listenerDef->replaceArgument(4, new Reference($typeConfig['listener']['logger']));
+            $listenerDef->replaceArgument(3, new Reference($typeConfig['listener']['logger']));
         }
 
+        $tagName = null;
         switch ($typeConfig['driver']) {
-            case 'orm': $listenerDef->addTag('doctrine.event_subscriber'); break;
-            case 'mongodb': $listenerDef->addTag('doctrine_mongodb.odm.event_subscriber'); break;
+            case 'orm':
+                $tagName = 'doctrine.event_listener';
+                break;
+            case 'mongodb':
+                $tagName = 'doctrine_mongodb.odm.event_listener';
+                break;
+        }
+
+        if ($tagName) {
+            foreach ($this->getDoctrineEvents($typeConfig) as $event) {
+                $listenerDef->addTag($tagName, array('event' => $event));
+            }
         }
 
         $container->setDefinition($listenerId, $listenerDef);
@@ -522,7 +541,7 @@ class FOSElasticaExtension extends Extension
      *
      * @param array $typeConfig
      * @param ContainerBuilder $container
-     * @param $elasticaToModelId
+     * @param string $elasticaToModelId
      * @param Reference $typeRef
      * @param string $indexName
      * @param string $typeName

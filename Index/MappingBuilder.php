@@ -18,7 +18,7 @@ class MappingBuilder
 {
     /**
      * Skip adding default information to certain fields.
-     * 
+     *
      * @var array
      */
     private $skipTypes = array('completion');
@@ -36,10 +36,11 @@ class MappingBuilder
             $typeMappings[$typeConfig->getName()] = $this->buildTypeMapping($typeConfig);
         }
 
-        $mapping = array(
-            'mappings' => $typeMappings,
-            // 'warmers' => $indexConfig->getWarmers(),
-        );
+        $mapping = array();
+        if ($typeMappings) {
+            $mapping['mappings'] = $typeMappings;
+        }
+        // 'warmers' => $indexConfig->getWarmers(),
 
         $settings = $indexConfig->getSettings();
         if ($settings) {
@@ -57,24 +58,44 @@ class MappingBuilder
      */
     public function buildTypeMapping(TypeConfig $typeConfig)
     {
-        $mapping = array_merge($typeConfig->getMapping(), array(
-            // 'date_detection' => true,
-            // 'dynamic_date_formats' => array()
-            // 'dynamic_templates' => $typeConfig->getDynamicTemplates(),
-            // 'index_analyzer' => $typeConfig->getIndexAnalyzer(),
-            // 'numeric_detection' => false,
-            // 'properties' => array(),
-            // 'search_analyzer' => $typeConfig->getSearchAnalyzer(),
-        ));
+        $mapping = $typeConfig->getMapping();
+
+        if (null !== $typeConfig->getDynamicDateFormats()) {
+            $mapping['dynamic_date_formats'] = $typeConfig->getDynamicDateFormats();
+        }
+
+        if (null !== $typeConfig->getDateDetection()) {
+            $mapping['date_detection'] = $typeConfig->getDateDetection();
+        }
+
+        if (null !== $typeConfig->getNumericDetection()) {
+            $mapping['numeric_detection'] = $typeConfig->getNumericDetection();
+        }
+
+        if ($typeConfig->getIndexAnalyzer()) {
+            $mapping['index_analyzer'] = $typeConfig->getIndexAnalyzer();
+        }
+
+        if ($typeConfig->getSearchAnalyzer()) {
+            $mapping['search_analyzer'] = $typeConfig->getSearchAnalyzer();
+        }
 
         if (isset($mapping['dynamic_templates']) and empty($mapping['dynamic_templates'])) {
             unset($mapping['dynamic_templates']);
         }
 
         $this->fixProperties($mapping['properties']);
+        if (!$mapping['properties']) {
+            unset($mapping['properties']);
+        }
 
         if ($typeConfig->getModel()) {
             $mapping['_meta']['model'] = $typeConfig->getModel();
+        }
+
+        if (!$mapping) {
+            // Empty mapping, we want it encoded as a {} instead of a []
+            $mapping = new \stdClass;
         }
 
         return $mapping;
@@ -89,8 +110,13 @@ class MappingBuilder
     private function fixProperties(&$properties)
     {
         foreach ($properties as $name => &$property) {
+            unset($property['property_path']);
+
             if (!isset($property['type'])) {
                 $property['type'] = 'string';
+            }
+            if ($property['type'] == 'multi_field' && isset($property['fields'])) {
+                $this->fixProperties($property['fields']);
             }
             if (isset($property['properties'])) {
                 $this->fixProperties($property['properties']);

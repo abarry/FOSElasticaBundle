@@ -3,7 +3,11 @@
 namespace FOS\ElasticaBundle\Doctrine;
 
 use Doctrine\Common\EventArgs;
-use Doctrine\Common\EventSubscriber;
+use Doctrine\Common\Persistence\Event\LifecycleEventArgs;
+use Doctrine\Common\Persistence\Event\ManagerEventArgs;
+use Doctrine\ODM\MongoDB\PersistentCollection as MongoDBPersistentCollection;
+use Doctrine\ORM\Event\PostFlushEventArgs;
+use Doctrine\ORM\PersistentCollection as ORMPersistentCollection;
 use FOS\ElasticaBundle\Persister\ObjectPersisterInterface;
 use FOS\ElasticaBundle\Persister\ObjectPersister;
 use FOS\ElasticaBundle\Provider\IndexableInterface;
@@ -14,7 +18,7 @@ use Symfony\Component\PropertyAccess\PropertyAccessorInterface;
  * Automatically update ElasticSearch based on changes to the Doctrine source
  * data. One listener is generated for each Doctrine entity / ElasticSearch type.
  */
-class Listener implements EventSubscriber
+class Listener
 {
     /**
      * Object persister
@@ -24,13 +28,6 @@ class Listener implements EventSubscriber
     protected $objectPersister;
 
     /**
-     * List of subscribed events
-     *
-     * @var array
-     */
-    protected $events;
-
-    /**
      * Configuration for the listener
      *
      * @var string
@@ -38,13 +35,23 @@ class Listener implements EventSubscriber
     private $config;
 
     /**
-     * Objects scheduled for insertion and replacement
+     * Objects scheduled for insertion.
+     *
+     * @var array
      */
     public $scheduledForInsertion = array();
+
+    /**
+     * Objects scheduled to be updated or removed.
+     *
+     * @var array
+     */
     public $scheduledForUpdate = array();
 
     /**
      * IDs of objects scheduled for removal
+     *
+     * @var array
      */
     public $scheduledForDeletion = array();
 
@@ -56,7 +63,7 @@ class Listener implements EventSubscriber
     protected $propertyAccessor;
 
     /**
-     * @var \FOS\ElasticaBundle\Provider\IndexableInterface
+     * @var IndexableInterface
      */
     private $indexable;
 
@@ -64,14 +71,12 @@ class Listener implements EventSubscriber
      * Constructor.
      *
      * @param ObjectPersisterInterface $objectPersister
-     * @param array $events
      * @param IndexableInterface $indexable
      * @param array $config
      * @param null $logger
      */
     public function __construct(
         ObjectPersisterInterface $objectPersister,
-        array $events,
         IndexableInterface $indexable,
         array $config = array(),
         $logger = null
@@ -79,7 +84,6 @@ class Listener implements EventSubscriber
         $this->config = array_merge(array(
             'identifier' => 'id',
         ), $config);
-        $this->events = $events;
         $this->indexable = $indexable;
         $this->objectPersister = $objectPersister;
         $this->propertyAccessor = PropertyAccess::createPropertyAccessor();
@@ -90,86 +94,35 @@ class Listener implements EventSubscriber
     }
 
     /**
-     * @see Doctrine\Common\EventSubscriber::getSubscribedEvents()
-     */
-    public function getSubscribedEvents()
-    {
-        return $this->events;
-    }
-
-    /**
-     * Provides unified method for retrieving a doctrine object from an EventArgs instance
-     *
-     * @param   EventArgs           $eventArgs
-     * @return  object              Entity | Document
-     * @throws  \RuntimeException   if no valid getter is found.
-     */
-    private function getDoctrineObject(EventArgs $eventArgs)
-    {
-        if (method_exists($eventArgs, 'getObject')) {
-            return $eventArgs->getObject();
-        } elseif (method_exists($eventArgs, 'getEntity')) {
-            return $eventArgs->getEntity();
-        } elseif (method_exists($eventArgs, 'getDocument')) {
-            return $eventArgs->getDocument();
-        }
-
-        throw new \RuntimeException('Unable to retrieve object from EventArgs.');
-    }
-
-    /**
-     * Provides unified method for retrieving a doctrine object manager from an EventArgs instance
-     *
-     * @param   EventArgs           $eventArgs
-     * @return  ObjectManager       An instance implementing ObjectManager
-     * @throws  \RuntimeException   if no valid getter is found.
-     */
-    private function getObjectManager(EventArgs $eventArgs)
-    {
-        if (method_exists($eventArgs, 'getObjectManager')) {
-            return $eventArgs->getObjectManager();
-        } elseif (method_exists($eventArgs, 'getEntityManager')) {
-            return $eventArgs->getEntityManager();
-        } elseif (method_exists($eventArgs, 'getDocumentManager')) {
-            return $eventArgs->getDocumentManager();
-        }
-
-        throw new \RuntimeException('Unable to retrieve object manager from EventArgs.');
-    }
-
-    /**
      * Handles newly created entities that have been persisted to the database
      * The postPersist event must be used so newly persisted entities have their identifier value
      *
-     * @param   EventArgs           $eventArgs
-     * @return  void
+     * @param LifecycleEventArgs $eventArgs
      */
-    public function postPersist(EventArgs $eventArgs)
+    public function postPersist(LifecycleEventArgs $eventArgs)
     {
-        $entity = $this->getDoctrineObject($eventArgs);
-        $this->scheduleForInsertion($entity);
+        $this->scheduleForInsertion($eventArgs->getObject());
     }
 
     /**
      * Handles updated entities
      *
-     * @param   EventArgs           $eventArgs
-     * @return  void
+     * @param LifecycleEventArgs $eventArgs
      */
-    public function postUpdate(EventArgs $eventArgs)
+    public function postUpdate(LifecycleEventArgs $eventArgs)
     {
-        $entity = $this->getDoctrineObject($eventArgs);
-        $this->scheduleForUpdate($entity);
+        $this->scheduleForUpdate($eventArgs->getObject());
     }
 
     /**
      * Delete objects preRemove instead of postRemove so that we have access to the id.  Because this is called
      * preRemove, first check that the entity is managed by Doctrine
+     *
+     * @param LifecycleEventArgs $eventArgs
      */
-    public function preRemove(EventArgs $eventArgs)
+    public function preRemove(LifecycleEventArgs $eventArgs)
     {
-        $entity = $this->getDoctrineObject($eventArgs);
-        $this->scheduleForDeletion($entity);
+        $this->scheduleForDeletion($eventArgs->getObject());
     }
 
     /**
@@ -193,17 +146,26 @@ class Listener implements EventSubscriber
     }
 
     /**
-     * Iterate through scheduled actions before flushing to emulate 2.x behavior.  Note that the ElasticSearch index
-     * will fall out of sync with the source data in the event of a crash during flush.
+     * Iterate through scheduled actions before flushing to emulate 2.x behavior.
+     * Note that the ElasticSearch index will fall out of sync with the source
+     * data in the event of a crash during flush.
+     *
+     * This method is only called in legacy configurations of the listener.
+     *
+     * @deprecated This method should only be called in applications that depend
+     *             on the behaviour that entities are indexed regardless of if a
+     *             flush is successful.
      */
-    public function preFlush(EventArgs $eventArgs)
+    public function preFlush()
     {
         $this->persistScheduled();
     }
 
     /**
-     * Iterating through scheduled actions *after* flushing ensures that the ElasticSearch index will be affected
-     * only if the query is successful
+     * Iterating through scheduled actions *after* flushing ensures that the
+     * ElasticSearch index will be affected only if the query is successful.
+     *
+     * @param EventArgs $eventArgs
      */
     public function postFlush(EventArgs $eventArgs)
     {
@@ -213,10 +175,9 @@ class Listener implements EventSubscriber
 
     /**
      * Provides a unified method for scheduling Doctrine objects with collection changes (e.g. ReferenceMany) to be
-     * updated in Elasticsearch
+     * updated in ElasticSearch
      *
-     * @param   EventArgs           $eventArgs
-     * @return  void
+     * @param EventArgs $eventArgs
      */
     private function scheduleObjectsWithCollectionChanges(EventArgs $eventArgs)
     {
@@ -229,74 +190,80 @@ class Listener implements EventSubscriber
     /**
      * Provides a unified method for retrieving a set of collection changes from the Doctrine UnitOfWork
      *
-     *
-     * @param   EventArgs  $eventArgs
-     * @return  array      An array of PersistentCollection objects
+     * @param EventArgs $eventArgs
+     * @return array
+     * @throws \Exception when encountering an unknown EventArgs instance
      */
     private function getCollectionChanges(EventArgs $eventArgs)
     {
-        $objectManager = $this->getObjectManager($eventArgs);
-        $uow = $objectManager->getUnitOfWork();
+        if ($eventArgs instanceof ManagerEventArgs) {
+            $om = $eventArgs->getObjectManager();
+        } elseif ($eventArgs instanceof PostFlushEventArgs) {
+            $om = $eventArgs->getEntityManager();
+        } else {
+            throw new \Exception('Unknown EventArgs');
+        }
+
+        $uow = $om->getUnitOfWork();
 
         // Merge updates (adds, removes) and deletes (entire collection removals) and return
         $changes = array_merge($uow->getScheduledCollectionUpdates(), $uow->getScheduledCollectionDeletions());
         return array_filter($changes, function($collection) {
-            if ($collection instanceof \Doctrine\ORM\PersistentCollection) {
-                return true;
-            }
-            if ($collection instanceof \Doctrine\ODM\MongoDB\PersistentCollection) {
-                return true;
-            }
-            return false;
+            return $collection instanceof ORMPersistentCollection ||
+                $collection instanceof MongoDBPersistentCollection;
         });
     }
 
     /**
      * Schedules a Doctrine object (entity/document) to be updated in Elasticsearch
      *
-     * @param  mixed  $object
-     * @return void
+     * @param mixed $object
      */
     private function scheduleForUpdate($object)
     {
-        if ($this->objectPersister->handlesObject($object)) {
-            if ($this->isObjectIndexable($object)) {
-                $oid = spl_object_hash($object);
-                $this->scheduledForUpdate[$oid] = $object;
-            } else {
-                // Delete if no longer indexable
-                $this->scheduleForDeletion($object);
-            }
+        if (!$this->objectPersister->handlesObject($object)) {
+            return;
+        }
+
+        if ($this->isObjectIndexable($object)) {
+            $this->scheduledForUpdate[spl_object_hash($object)] = $object;
+        } else {
+            // Delete if no longer indexable
+            $this->scheduleForDeletion($object);
         }
     }
 
     /**
      * Schedules a Doctrine object (entity/document) for insertion into Elasticsearch
      *
-     * @param  mixed  $object
-     * @return void
+     * @param mixed $object
      */
     private function scheduleForInsertion($object)
     {
-        if ($this->objectPersister->handlesObject($object) && $this->isObjectIndexable($object)) {
-            $oid = spl_object_hash($object);
-            $this->scheduledForInsertion[$oid] = $object;
+        if (!$this->objectPersister->handlesObject($object) || !$this->isObjectIndexable($object)) {
+            return;
         }
+
+        $this->scheduledForInsertion[spl_object_hash($object)] = $object;
     }
 
     /**
      * Record the specified identifier to delete. Do not need to entire object.
-     * @param  mixed  $object
-     * @return mixed
+     *
+     * @param object $object
      */
     private function scheduleForDeletion($object)
     {
-        if ($this->objectPersister->handlesObject($object)) {
-            if ($identifierValue = $this->propertyAccessor->getValue($object, $this->config['identifier'])) {
-                $oid = spl_object_hash($object);
-                $this->scheduledForDeletion[$oid] = $identifierValue;
-            }
+        if (!$this->objectPersister->handlesObject($object)) {
+            return;
         }
+
+        $identifierValue = $this->propertyAccessor->getValue($object, $this->config['identifier']);
+        if (!$identifierValue) {
+            return;
+        }
+
+        $this->scheduledForDeletion[spl_object_hash($object)] = $identifierValue;
     }
 
     /**

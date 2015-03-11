@@ -36,6 +36,30 @@ class TypeConfig
     }
 
     /**
+     * @return bool|null
+     */
+    public function getDateDetection()
+    {
+        return $this->getConfig('date_detection');
+    }
+
+    /**
+     * @return array
+     */
+    public function getDynamicDateFormats()
+    {
+        return $this->getConfig('dynamic_date_formats');
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getIndexAnalyzer()
+    {
+        return $this->getConfig('index_analyzer');
+    }
+
+    /**
      * @return array
      */
     public function getMapping()
@@ -43,6 +67,9 @@ class TypeConfig
         return $this->mapping;
     }
 
+    /**
+     * @return string|null
+     */
     public function getModel()
     {
         return isset($this->config['persistence']['model']) ?
@@ -51,10 +78,36 @@ class TypeConfig
     }
 
     /**
+     * @return bool|null
+     */
+    public function getNumericDetection()
+    {
+        return $this->getConfig('numeric_detection');
+    }
+
+    /**
      * @return string
      */
     public function getName()
     {
         return $this->name;
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getSearchAnalyzer()
+    {
+        return $this->getConfig('search_analyzer');
+    }
+
+    /**
+     * @param string $key
+     */
+    private function getConfig($key)
+    {
+        return isset($this->config[$key]) ?
+            $this->config[$key] :
+            null;
     }
 }
